@@ -1,3 +1,6 @@
+const configuredBaseURL = process.env.NUXT_APP_BASE_URL || '/'
+const appBaseURL = configuredBaseURL.endsWith('/') ? configuredBaseURL : `${configuredBaseURL}/`
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: false },
@@ -40,7 +43,7 @@ export default defineNuxtConfig({
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       ],
       link: [
-        { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
+        { rel: 'icon', type: 'image/x-icon', href: `${appBaseURL}favicon.ico` },
       ],
     },
   },
