@@ -3,6 +3,8 @@ node_modules/
 .nuxt/
 .output/
 dist/
+public/assets/png/
 test-results/
 playwright-report/
 tests/visual/
+*.bat

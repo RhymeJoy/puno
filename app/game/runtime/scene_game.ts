@@ -908,6 +908,8 @@ class Scene_Game extends Scene_Base{
 
       let bar = new Sprite_ProgressBar(bx, by, bw, bh)
       bar.changeColor(Graphics.color.LightGreen);
+      bar.enableHealthColorMode();
+      bar.enableValueText('health');
       bar.setMaxProgress(GameManager.initHP);
       bar.setProgress(GameManager.initHP);
       bar.on('pointerenter', ()=>{

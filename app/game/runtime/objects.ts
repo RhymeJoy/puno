@@ -12,6 +12,7 @@ class Sprite_ProgressBar extends SpriteCanvas{
     this.currentProgress = 0;
     this._borderWidth    = 4;
     this.fillHorz        = (width > height);
+    this._healthColorMode = false;
     this.changeColor(Graphics.color.DeepSkyBlue);
     this.createSprite();
     this.drawBorderSprite();
@@ -32,6 +33,29 @@ class Sprite_ProgressBar extends SpriteCanvas{
     this.refresh();
   }
   /*-------------------------------------------------------------------------*/
+  enableHealthColorMode(){
+    this._healthColorMode = true;
+    this.refresh();
+    return this;
+  }
+  /*-------------------------------------------------------------------------*/
+  enableValueText(mode = 'percent'){
+    this.valueTextMode = mode === 'health' ? 'health' : 'percent';
+    if(!this.valueText){this.createValueText();}
+    this.updateValueText();
+    return this;
+  }
+  /*-------------------------------------------------------------------------*/
+  getFillColor(){
+    if(!this._healthColorMode){return this.color;}
+    const ratio = this.maxProgress > 0
+      ? this.currentProgress / this.maxProgress
+      : 0;
+    if(ratio < 0.25){return Graphics.color.Red;}
+    if(ratio < 0.5){return Graphics.color.Yellow;}
+    return Graphics.color.LightGreen;
+  }
+  /*-------------------------------------------------------------------------*/
   resize(w, h){
     super.resize(w, h);
     this.clear();
@@ -50,7 +74,8 @@ class Sprite_ProgressBar extends SpriteCanvas{
       let dh = (this.height - this.borderWidth * 2) * (this.currentProgress / this.maxProgress);
       this.indexSprite.rect(0, 0, this.width - this.borderWidth, dh);
     }
-    this.indexSprite.fill(this.color);
+    this.indexSprite.fill(this.getFillColor());
+    this.updateValueText();
   }
   /*-------------------------------------------------------------------------*/
   createSprite(){
@@ -59,6 +84,38 @@ class Sprite_ProgressBar extends SpriteCanvas{
     this.indexSprite.setPOS(this.borderWidth, this.borderWidth);
     this.addChild(this.indexSprite);
     this.addChild(this.borderSprite);
+  }
+  createValueText(){
+    const font = clone(Graphics.DefaultFontSetting);
+    font.fontSize = 14;
+    font.fill = 0xffffff;
+    font.stroke = {color: 0x000000, width: 3};
+    this.valueText = new PIXI.Text({text: '', style: font});
+    this.valueText.anchor.set(0.5);
+    this.valueText.eventMode = 'none';
+    this.valueText.static = true;
+    this.valueText.setZ(3);
+    this.addChild(this.valueText);
+    this.updateValueTextLayout();
+    this.updateValueText();
+  }
+  updateValueTextLayout(){
+    if(!this.valueText){return;}
+    this.valueText.position.set(this.width / 2, this.height / 2);
+    this.valueText.rotation = this.fillHorz ? 0 : -Math.PI / 2;
+  }
+  updateValueText(){
+    if(!this.valueText){return;}
+    if(this.valueTextMode === 'health'){
+      this.valueText.text = `${this.currentProgress} / ${this.maxProgress}`;
+    }
+    else{
+      const ratio = this.maxProgress > 0
+        ? this.currentProgress / this.maxProgress
+        : 0;
+      this.valueText.text = `${Math.round(Math.min(1, Math.max(0, ratio)) * 100)}%`;
+    }
+    this.updateValueTextLayout();
   }
   /*-------------------------------------------------------------------------*/
   clear(){

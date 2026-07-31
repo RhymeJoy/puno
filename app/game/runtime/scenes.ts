@@ -505,6 +505,7 @@ class Scene_Load extends Scene_Base{
     let dx = Graphics.appCenterWidth(dw), dy = this.load_text.y + 36;
     this.bar = new Sprite_ProgressBar(dx, dy, dw, dh);
     this.bar.setMaxProgress(Graphics.getLoadingProgress[1] + Sound.getLoadingProgress[1]);
+    this.bar.enableValueText();
   }
   /*-------------------------------------------------------------------------*/
   createLoadingImage(){
@@ -581,7 +582,10 @@ class Scene_Load extends Scene_Base{
   }
   /*-------------------------------------------------------------------------*/
   updateProgressBar(){
-    this.bar.setProgress(Graphics.getLoadingProgress[0] + Sound.getLoadingProgress[0]);
+    const current = Graphics.getLoadingProgress[0] + Sound.getLoadingProgress[0];
+    const max = Graphics.getLoadingProgress[1] + Sound.getLoadingProgress[1];
+    if(this.bar.maxProgress !== max){this.bar.setMaxProgress(max);}
+    this.bar.setProgress(current);
   }
   /*-------------------------------------------------------------------------*/
   processLoadingPhase(){
@@ -1224,6 +1228,8 @@ class Scene_GameOver extends Scene_Base{
       );
     }
     this.resizeActionButtons(140);
+    this.resultWindow.addChild(this.backButton);
+    if(this.restartButton){this.resultWindow.addChild(this.restartButton);}
     this.positionActionButtons();
     this.backButton.setZ(0x10).deactivate().hide();
     this.restartButton?.setZ(0x10).deactivate().hide();
@@ -1245,9 +1251,8 @@ class Scene_GameOver extends Scene_Base{
     const resultWindow = this.resultWindow;
     const gap = this.restartButton ? Graphics.spacing : 0;
     const totalWidth = this.backButton.width + gap + (this.restartButton?.width || 0);
-    let wx = resultWindow.x + (resultWindow.width - totalWidth) / 2;
-    let wy = resultWindow.y + resultWindow.height
-      - this.backButton.height - resultWindow.padding;
+    const wx = (resultWindow.width - totalWidth) / 2;
+    const wy = resultWindow.height - this.backButton.height - resultWindow.padding;
     this.backButton.setPOS(wx, wy).setZ(0x10).deactivate().hide();
     if(this.restartButton){
       this.restartButton.setPOS(wx + this.backButton.width + gap, wy)
@@ -1264,8 +1269,6 @@ class Scene_GameOver extends Scene_Base{
       this.showLeaveButton();
     }, 90 + this.fadeDuration);
     this.resultWindow.render();
-    this.backButton.render();
-    this.restartButton?.render();
   }
   /*-------------------------------------------------------------------------*/
   update(){

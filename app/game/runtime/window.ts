@@ -887,6 +887,11 @@ class Window_Option extends Window_Selectable{
     this.createHelpPanel();
     this.createHelpDivider();
     this.createExitButton();
+    this.createOptionViewportMask();
+    this.createOptionViewportLines();
+    this.createOptionScrollbar();
+    this.applyOptionViewportMask();
+    this.refreshOptionScrollbar();
     this.updateHelp();
   }
   /*------------------------------------------------------------------------*/
@@ -899,6 +904,44 @@ class Window_Option extends Window_Selectable{
   get dividerX(){return this.optionPanelWidth + this.spacing / 2;}
   // Leave the same inset on both sides of the left panel.
   get itemWidth(){return this.dividerX - this.padding;}
+  get optionTop(){
+    // The first two selection slots reserve space for the title area.
+    return this.getIndexItemPOS(2).y - this.spacing * 1.5;
+  }
+  get optionBottom(){
+    // Keep the scrollable options above the fixed bottom action row.
+    return this.actionRowTop - this.spacing;
+  }
+  get optionBottomGap(){return this.spacing;}
+  get actionButtonWidth(){return 136;}
+  get actionButtonHeight(){return 40;}
+  get actionButtonGap(){return this.spacing;}
+  get actionRowTop(){
+    return this.height - this.padding / 2 - this.actionButtonHeight;
+  }
+  get actionButtonGroupWidth(){
+    const count = this.leaveBattleSelection ? 2 : 1;
+    return count * this.actionButtonWidth
+      + (count - 1) * this.actionButtonGap;
+  }
+  get actionButtonStartX(){
+    return Math.max(0, (this.dividerX - this.actionButtonGroupWidth) / 2);
+  }
+  get optionContentBottom(){
+    let bottom = this.optionTop;
+    for(let i = 0; i < this._selections.length; ++i){
+      if(!this._selections[i]){continue;}
+      const pos = this.getIndexItemPOS(i);
+      bottom = Math.max(bottom, pos.y + this.itemHeight);
+    }
+    return bottom;
+  }
+  get maxScrollY(){
+    return Math.max(
+      0,
+      this.optionContentBottom - (this.optionBottom - this.optionBottomGap)
+    );
+  }
   get cursorFrameOverflow(){
     return Graphics.wSkinCursorUL.width + Graphics.wSkinCursorUR.width;
   }
@@ -910,6 +953,13 @@ class Window_Option extends Window_Selectable{
   get volumeBarX(){return 220;}
   get volumeValueX(){return 500;}
   get helpPanelX(){return this.dividerX + this.spacing / 2;}
+  addSelection(...items){
+    super.addSelection(...items);
+    if(this.optionViewportMask){
+      this.applyOptionViewportMask(items);
+      this.refreshOptionScrollbar();
+    }
+  }
   cursorRect(index){
     const rect = super.cursorRect(index);
     // The cursor skin grows beyond its content rect by its two corner widths.
@@ -924,7 +974,175 @@ class Window_Option extends Window_Selectable{
     font.fontSize = 28;
     let txt = this.drawText(0, 0, Vocab["Options"], font);
     txt.x = (this.dividerX - txt.width) / 2;
+    txt.static = true;
+    this.titleSprite = txt;
   }
+  createOptionViewportMask(){
+    const mask = new PIXI.Graphics();
+    mask
+      .rect(
+        0,
+        this.optionTop,
+        this.dividerX,
+        Math.max(0, this.optionBottom - this.optionTop)
+      )
+      .fill(Graphics.color.White);
+    mask.static = true;
+    this.optionViewportMask = mask;
+    this.addChild(mask);
+    if(this.cursorSprite){
+      this.cursorSprite.mask = mask;
+    }
+  }
+  createOptionViewportLines(){
+    const lines = new PIXI.Graphics();
+    lines
+      .rect(0, this.optionTop, this.dividerX, 2)
+      .rect(0, this.optionBottom, this.dividerX, 2)
+      .fill({color: Graphics.color.Gold, alpha: 0.8});
+    lines.setZ(4).static = true;
+    lines.eventMode = 'none';
+    this.optionViewportLines = lines;
+    this.addChild(lines);
+  }
+  createOptionScrollbar(){
+    const track = new PIXI.Graphics();
+    const thumb = new PIXI.Graphics();
+    track.setZ(5).static = true;
+    thumb.setZ(6).static = true;
+    track.eventMode = 'none';
+    thumb.eventMode = 'static';
+    thumb.on('pointerdown', this.onOptionScrollbarDragStart.bind(this));
+    thumb.on('pointerup', this.onOptionScrollbarDragEnd.bind(this));
+    thumb.on('pointerupoutside', this.onOptionScrollbarDragEnd.bind(this));
+    thumb.on('pointercancel', this.onOptionScrollbarDragEnd.bind(this));
+    thumb.on('globalpointermove', this.onOptionScrollbarDragMove.bind(this));
+    thumb.on('pointertap', function(event){event.stopPropagation?.();});
+    this.optionScrollbarDragging = false;
+    this.optionScrollbarDragOffset = 0;
+    this.optionScrollbarTrack = track;
+    this.optionScrollbarThumb = thumb;
+    this.addChild(track);
+    this.addChild(thumb);
+  }
+  applyOptionViewportMask(items = this._selections){
+    if(!this.optionViewportMask){return;}
+    (items || []).forEach(item => {
+      if(!item){return;}
+      item.mask = this.optionViewportMask;
+      if(item.maskGraphics){
+        item.maskGraphics.visible = false;
+        item.maskGraphics.renderable = false;
+      }
+    });
+  }
+  onOptionScrollbarDragStart(event){
+    const metrics = this.optionScrollbarMetrics;
+    if(!metrics?.visible || metrics.thumbTravel <= 0){return;}
+    const point = event.getLocalPosition(this);
+    this.optionScrollbarDragging = true;
+    this.optionScrollbarDragOffset = point.y - metrics.thumbY;
+    event.stopPropagation?.();
+  }
+  onOptionScrollbarDragEnd(event){
+    this.optionScrollbarDragging = false;
+    this.optionScrollbarDragOffset = 0;
+    event.stopPropagation?.();
+  }
+  onOptionScrollbarDragMove(event){
+    if(!this.optionScrollbarDragging){return;}
+    const metrics = this.optionScrollbarMetrics;
+    if(!metrics?.visible || metrics.thumbTravel <= 0){return;}
+    const point = event.getLocalPosition(this);
+    const thumbY = Math.min(
+      metrics.trackTop + metrics.thumbTravel,
+      Math.max(metrics.trackTop, point.y - this.optionScrollbarDragOffset)
+    );
+    const ratio = (thumbY - metrics.trackTop) / metrics.thumbTravel;
+    this.setDisplayOrigin(0, ratio * metrics.maxScroll);
+    this.syncCursorToDisplay();
+    this.refreshOptionScrollbar();
+    event.stopPropagation?.();
+  }
+  refreshOptionScrollbar(){
+    const track = this.optionScrollbarTrack;
+    const thumb = this.optionScrollbarThumb;
+    if(!track || !thumb){return;}
+
+    const trackWidth = 10;
+    const trackTop = this.optionTop + 4;
+    const trackBottom = this.optionBottom - 4;
+    const trackHeight = Math.max(0, trackBottom - trackTop);
+    const viewportHeight = Math.max(0, this.optionBottom - this.optionTop);
+    const maxScroll = this.maxScrollY;
+    const contentHeight = Math.max(
+      viewportHeight,
+      this.optionContentBottom - this.optionTop + this.optionBottomGap
+    );
+    const thumbHeight = Math.min(
+      trackHeight,
+      Math.max(28, trackHeight * viewportHeight / contentHeight)
+    );
+    const thumbTravel = Math.max(0, trackHeight - thumbHeight);
+    const thumbY = trackTop + (
+      maxScroll > 0 ? thumbTravel * this.oy / maxScroll : 0
+    );
+    const x = this.dividerX - this.padding / 2 - trackWidth;
+    const visible = maxScroll > 0 && trackHeight > 0;
+
+    this.optionScrollbarMetrics = {
+      trackTop,
+      trackHeight,
+      thumbHeight,
+      thumbTravel,
+      thumbY,
+      maxScroll,
+      visible,
+    };
+
+    track.clear();
+    thumb.clear();
+    if(visible){
+      track
+        .roundRect(x, trackTop, trackWidth, trackHeight, 3)
+        .fill({color: Graphics.color.Black, alpha: 0.72})
+        .stroke({width: 1, color: Graphics.color.White, alpha: 0.35});
+      thumb
+        .roundRect(x, thumbY, trackWidth, thumbHeight, 3)
+        .fill({color: Graphics.color.Gold, alpha: 0.95})
+        .stroke({width: 1, color: Graphics.color.White, alpha: 0.9});
+    }
+    thumb.hitArea = new Rect(x, thumbY, trackWidth + 10, thumbHeight);
+    track.visible = visible;
+    thumb.visible = visible;
+  }
+  scrollOptions(amount){
+    const next = Math.max(0, Math.min(this.maxScrollY, this.oy + amount));
+    if(next === this.oy){return;}
+    this.setDisplayOrigin(0, next);
+    this.syncCursorToDisplay();
+    this.refreshOptionScrollbar();
+  }
+  syncCursorToDisplay(){
+    if(this.index < 0 || !this.cursorSprite){return;}
+    const rect = this.cursorRect(this.index);
+    this.cursorSprite.setPOS(rect.x, rect.y - this.oy);
+  }
+  select(index, se = true){
+    super.select(index, se);
+    this.syncCursorToDisplay();
+  }
+  update(){
+    super.update();
+    if(!this.isActive() || !Input.isMouseInArea(this.rect)){return;}
+    if(Input.isWheelUp()){
+      this.scrollOptions(-this.scrollStep);
+    }
+    else if(Input.isWheelDown()){
+      this.scrollOptions(this.scrollStep);
+    }
+  }
+  get scrollStep(){return this.itemHeight + this.spacing;}
   createHelpPanel(){
     this.helpWindow = new Window_Help(
       this.helpPanelX,
@@ -956,14 +1174,21 @@ class Window_Option extends Window_Selectable{
     this.addChild(divider);
   }
   createExitButton(){
-    const width = 136;
-    const height = 40;
-    const button = new SpriteCanvas(
-      this.width - this.padding / 2 - width,
-      this.height - this.padding / 2 - height,
-      width,
-      height
+    const button = this.createActionButton(
+      Vocab["Back"] || "Back",
+      function(){
+      Sound.playCancel();
+      SceneManager.scene.closeOverlayAll();
+      }
     );
+    this.exitButton = button;
+    this.addChild(button);
+    this.positionActionButtons();
+  }
+  createActionButton(text, handler){
+    const width = this.actionButtonWidth;
+    const height = this.actionButtonHeight;
+    const button = new SpriteCanvas(0, 0, width, height);
     button.setZ(0x60).static = true;
 
     const background = new PIXI.Graphics();
@@ -978,18 +1203,31 @@ class Window_Option extends Window_Selectable{
 
     const font = clone(Graphics.DefaultFontSetting);
     font.fontSize = 20;
-    const label = button.drawText(0, 0, Vocab["Exit"] || "Exit", font);
-    label.x = Math.round((width - label.width) / 2);
-    label.y = Math.round((height - label.height) / 2);
-
-    button.on('pointertap', function(){
-      Sound.playCancel();
-      SceneManager.scene.closeOverlayAll();
-    });
+    const label = button.drawText(0, 0, text, font);
+    const centerLabel = function(){
+      label.x = Math.round((width - label.width) / 2);
+      label.y = Math.round((height - label.height) / 2);
+    };
+    centerLabel();
+    button.actionLabel = label;
+    button.setActionText = function(value){
+      label.text = value == null ? '' : String(value);
+      centerLabel();
+    };
+    button.on('pointertap', handler);
     button.on('pointerenter', function(){drawBackground(true);});
     button.on('pointerleave', function(){drawBackground(false);});
-    this.exitButton = button;
-    this.addChild(button);
+    return button;
+  }
+  positionActionButtons(){
+    const buttons = [this.leaveBattleSelection, this.exitButton].filter(Boolean);
+    const x = this.actionButtonStartX;
+    buttons.forEach(function(button, index){
+      button.setPOS(
+        x + index * (this.actionButtonWidth + this.actionButtonGap),
+        this.actionRowTop
+      ).setZ(0x60);
+    }.bind(this));
   }
   updateHelp(){
     const text = this.index >= 0 && this.currentItem?.help
@@ -1027,29 +1265,26 @@ class Window_Option extends Window_Selectable{
   /*------------------------------------------------------------------------*/
   addLeaveBattleOption(){
     if(this.leaveBattleSelection){return;}
-    let pos = this.nextItemPOS;
-    let sp = new SpriteCanvas(0, 0, this.itemWidth, this.itemHeight);
-    this.drawItemText(sp, this.labelX, Vocab["LeaveBattle"]);
-    sp.setPOS(pos.x, pos.y);
-    sp.help = Vocab["HelpLeaveBattle"];
-    let handler = function(){
+    const button = this.createActionButton(
+      Vocab["LeaveBattle"] || "Leave Battle",
+      function(){
       this.confirmLeaveBattle();
-    }.bind(this);
-    sp.on('pointertap', handler);
-    this.leaveBattleSelection = sp;
-    this.addSelection(sp);
+      }.bind(this)
+    );
+    button.help = Vocab["HelpLeaveBattle"] || '';
+    this.leaveBattleSelection = button;
+    this.addChild(button);
+    this.positionActionButtons();
   }
   /*------------------------------------------------------------------------*/
   removeLeaveBattleOption(){
     const item = this.leaveBattleSelection;
     if(!item){return;}
-    const index = this._selections.indexOf(item);
-    if(index >= 0){this._selections.splice(index, 1);}
     if(this.children.indexOf(item) >= 0){this.removeChild(item);}
     item.removeAllListeners?.();
     item.destroy?.({children: true});
     this.leaveBattleSelection = null;
-    if(this._index >= this._selections.length){this.unselect();}
+    this.positionActionButtons();
   }
   /*------------------------------------------------------------------------*/
   confirmLeaveBattle(){
