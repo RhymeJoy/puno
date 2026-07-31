@@ -1,0 +1,25 @@
+{
+  "Title": "audio/bgm/main.mp3",
+  "Cancel": "audio/se/KHSE_Cancel.mp3",
+  "Cursor": "audio/se/KHSE_CursorMove.mp3",
+  "Buzzer": "audio/se/KHSE_ErrorSelect.mp3",
+  "SaveLoad": "audio/se/KHSE_SaveLoad.mp3",
+  "OK": "audio/se/KHSE_Select.mp3",
+  "OK2": "audio/se/AOE_Confirm.mp3",
+  "Error": "audio/se/Buzzer1.mp3",
+  "Wave": "audio/se/seawave.wav",
+  "IconOK": "audio/se/Cursor1.mp3",
+  "Deal": "audio/se/cardDeal.mp3",
+  "IceHit": "audio/se/blue_hit.mp3",
+  "FireHit": "audio/se/red_hit.mp3",
+  "WindHit": "audio/se/green_hit.mp3",
+  "ThunderHit": "audio/se/yellow_hit.mp3",
+  "_comment": "Other un-named resrouce files",
+  "resources": [
+    "audio/se/cardDraw.mp3",
+    "audio/se/cardDraw2.mp3",
+    "audio/se/cardPlace1.mp3",
+    "audio/se/cardPlace2.mp3",
+    "audio/se/cardPlace3.mp3"
+  ]
+}

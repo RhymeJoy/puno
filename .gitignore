@@ -1,0 +1,8 @@
+node_modules/
+.deploy-git/
+.nuxt/
+.output/
+dist/
+test-results/
+playwright-report/
+tests/visual/

@@ -1,0 +1,27 @@
+{
+  "name": "battle-puno",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "test:visual": "playwright test",
+    "test:visual:update": "playwright test --update-snapshots",
+    "typecheck": "nuxt typecheck",
+    "postinstall": "nuxt prepare"
+  },
+  "devDependencies": {
+    "@nuxtjs/i18n": "^10.4.0",
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^24.13.3",
+    "nuxt": "^4.0.0",
+    "typescript": "^6.0.3",
+    "vue-tsc": "^3.3.8"
+  },
+  "dependencies": {
+    "pixi-filters": "^6.1.5",
+    "pixi.js": "^8.19.0"
+  }
+}
