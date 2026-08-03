@@ -747,9 +747,28 @@ class Window_Menu extends Window_Selectable{
     super(x, y, w, h);
     this.changeSkin(Graphics.WSkinCelestia)
     this.addAllSelections();
-    // Fit the frame to the four menu rows instead of leaving an extra blank
-    // row below the last button.
-    this.resize(this.width, this.padding + this.itemHeight * 4 + this.spacing * 3);
+    // The larger rows and gaps use the extra 60px while keeping the top edge
+    // fixed and preserving equal padding above and below the menu.
+    // Include the hover frame's 3px extension on both sides so the visible
+    // button frame keeps the same margin as the menu content.
+    this.resize(
+      this.width,
+      this.itemHeight * 4
+        + this.menuItemSpacing * 4
+        + this.cursorFrameOverflowY
+    );
+  }
+  /*------------------------------------------------------------------------*/
+  get menuItemHeight(){return 45;}
+  get menuItemSpacing(){return 12;}
+  get itemHeight(){return this.menuItemHeight;}
+  /*------------------------------------------------------------------------*/
+  getIndexItemPOS(index){
+    const pos = super.getIndexItemPOS(index);
+    pos.y = this.menuItemSpacing / 2
+      + this.cursorFrameOverflowY / 2
+      + index * (this.itemHeight + this.menuItemSpacing);
+    return pos;
   }
   /*------------------------------------------------------------------------*/
   addAllSelections(){
@@ -757,6 +776,14 @@ class Window_Menu extends Window_Selectable{
     this.addRules();
     this.addOptions();
     this.addCredits();
+  }
+  /*------------------------------------------------------------------------*/
+  menuTextFont(){
+    const font = clone(Graphics.DefaultFontSetting);
+    // Keep the title menu labels readable after enlarging its frame, while
+    // retaining each language's configured font family.
+    font.fontSize = Math.max(28, Number(font.fontSize) || 0);
+    return font;
   }
     refreshLanguage(){
       const wasActive = this.isActive();
@@ -783,6 +810,7 @@ class Window_Menu extends Window_Selectable{
   addStartGame(){
     let opt = {
       text: Vocab.StartGame,
+      font: this.menuTextFont(),
       align: 1,
       symbol: 'gameStart',
       handler: SceneManager.scene.onGameStart.bind(SceneManager.scene)
@@ -793,6 +821,7 @@ class Window_Menu extends Window_Selectable{
   addRules(){
     let opt = {
       text: Vocab.Rules,
+      font: this.menuTextFont(),
       handler: this.onRules.bind(this),
       align: 1,
     }
@@ -802,6 +831,7 @@ class Window_Menu extends Window_Selectable{
   addOptions(){
     let opt = {
       text: Vocab.Options,
+      font: this.menuTextFont(),
       handler: this.onOption.bind(this),
       align: 1,
     }
@@ -811,6 +841,7 @@ class Window_Menu extends Window_Selectable{
   addCredits(){
     let opt = {
       text: Vocab.Credits,
+      font: this.menuTextFont(),
       handler: this.onCredits.bind(this),
       align: 1,
     }
@@ -819,23 +850,8 @@ class Window_Menu extends Window_Selectable{
   /*------------------------------------------------------------------------*/
   onRules(){
     Sound.playOK();
-    let okHandler = function(){
-      Sound.playOK();
-
-      const opened = window.open(new URL('rules', window.location.href).toString(), "_blank");
-      if(!opened){window.alert(Vocab["PopupBlocked"] || "The browser blocked the new tab.");}
-      SceneManager.scene.closeOverlay();
-      if(!SceneManager._alwaysFocus){SceneManager.unfocusGame();}
-      }
-      let noHandler = function(){Sound.playCancel(); SceneManager.scene.closeOverlay();}
-      // Give the message and the two actions more breathing room so the
-      // confirmation frame does not feel cramped in smaller locales.
-      let win = new Window_Confirm(0, 0, 420, 180, Vocab["RulesRedirect"]);
-      win.messageKey = "RulesRedirect";
-      win.setPOS(Graphics.appCenterWidth(win.width), Graphics.appCenterHeight(win.height));
-    win.setHandler('yes', okHandler);
-    win.setHandler('no', noHandler);
-    win.raise();
+    SceneManager.scene.closeOverlay();
+    window.location.assign(new URL('rules', window.location.href).toString());
   }
   /*------------------------------------------------------------------------*/
   onOption(){
@@ -858,7 +874,7 @@ class Window_Menu extends Window_Selectable{
       }
       let win = new Window_Confirm(0, 0, 420, 180, Vocab["CreditsRedirect"]);
       win.messageKey = "CreditsRedirect";
-      win.setPOS(Graphics.appCenterWidth(win.width), Graphics.appCenterHeight(win.height));
+      win.setPOS(Graphics.appCenterWidth(win.width), Graphics.appVisibleCenterHeight(win.height));
     win.setHandler('yes', okHandler);
     win.setHandler('no', noHandler);
     win.raise();
@@ -877,7 +893,7 @@ class Window_Option extends Window_Selectable{
   constructor(){
     super();
     this.resize(this.WindowWidth, this.WindowHeight);
-    this.setPOS(Graphics.appCenterWidth(this.width), Graphics.appCenterHeight(this.height));
+    this.setPOS(Graphics.appCenterWidth(this.width), Graphics.appVisibleCenterHeight(this.height));
     this.drawTitle();
     // Keep two title rows clear: one replaces the old close-icon selection,
     // and one provides the requested extra breathing room below the title.
@@ -1301,7 +1317,7 @@ class Window_Option extends Window_Selectable{
     };
     const win = new Window_Confirm(0, 0, 460, 180, Vocab["LeaveBattleConfirm"]);
     win.messageKey = "LeaveBattleConfirm";
-    win.setPOS(Graphics.appCenterWidth(win.width), Graphics.appCenterHeight(win.height));
+    win.setPOS(Graphics.appCenterWidth(win.width), Graphics.appVisibleCenterHeight(win.height));
     win.setHandler('yes', yesHandler);
     win.setHandler('no', noHandler);
     win.raise();
@@ -3620,8 +3636,7 @@ class Window_CardSelection extends Window_Selectable{
     timerFont.fontSize = 18;
     timerFont.fontWeight = 'bold';
     timerFont.fill = 0xffd36a;
-    timerFont.stroke = 0x111111;
-    timerFont.strokeThickness = 3;
+    timerFont.stroke = {color: 0x111111, width: 3};
     this.choiceTimerText = new PIXI.Text({text: '', style: timerFont});
     this.choiceTimerText.anchor.set(0.5, 0.5);
     this.choiceTimerText.setPOS(this.width / 2, this.height - this.padding / 2 - this.lineHeight / 2);
@@ -3791,21 +3806,31 @@ class Window_Scoreboard extends Window_Base{
   constructor(){
     super(0,0,300,150);
     let ww = parseInt(Graphics.width  * 0.7);
-    let wh = parseInt(Graphics.height * 0.9);
+    // Keep a visible margin above and below the result panel. The height is
+    // derived from the logical viewport so it remains stable across display
+    // aspect ratios while the panel never touches the canvas edges.
+    let wh = Math.max(
+      Graphics.height - Graphics.padding * 4,
+      this.lineHeight * 8 + Graphics.padding * 2
+    );
+    wh = Math.min(wh, Graphics.height - Graphics.spacing * 2);
     let wx = Graphics.appCenterWidth(ww);
-    let wy = Graphics.appCenterHeight(wh);
+    let wy = Graphics.appVisibleCenterHeight(wh);
     this.setPOS(wx, wy).resize(ww, wh);
     this.game = GameManager.game;
   }
 
   drawRank(){
     let ar = this.game.players.slice();
-    if(this.game.gameMode == Mode.TRADITIONAL){
-      for(let i in ar){ar[i].score *= -1;}
-    }
+    const isTraditional = this.game.gameMode === Mode.TRADITIONAL;
     ar.sort(function(a,b){
-      if(b.score !== a.score){return b.score - a.score;}
-      if(this.game.gameMode === Mode.TIMED && a.hand && b.hand){
+      // Every mode displays a positive score and ranks higher scores first.
+      // Traditional scoring already rewards the player with fewer remaining
+      // card points, so it follows the same descending sort as other modes.
+      if(a.score !== b.score){
+        return b.score - a.score;
+      }
+      if((isTraditional || this.game.gameMode === Mode.TIMED) && a.hand && b.hand){
         return a.hand.length - b.hand.length;
       }
       return 0;

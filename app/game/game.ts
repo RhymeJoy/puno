@@ -452,10 +452,23 @@ class PunoGame {
   }
 
   gameResult() {
+    if (this.gameMode === Mode.TRADITIONAL) {
+      // Traditional mode uses a positive score: the fewer points left in a
+      // player's hand, the more points they receive from this round. This is
+      // equivalent to the total points left in every other hand and keeps the
+      // winner at the top without using negative display values.
+      const remaining = this.players.map(player =>
+        Math.max(0, player.cardsPointSum())
+      );
+      const totalRemaining = remaining.reduce((sum, value) => sum + value, 0);
+      for (let i = 0; i < this.players.length; ++i) {
+        this.players[i].score += Math.max(0, totalRemaining - remaining[i]);
+      }
+      return;
+    }
+
     for (let i in this.players) {
-      if (this.gameMode === Mode.TRADITIONAL) {
-        this.players[i].score += this.players[i].cardsPointSum();
-      } else if (this.gameMode === Mode.BATTLE_PUNO) {
+      if (this.gameMode === Mode.BATTLE_PUNO) {
         this.players[i].hp -= this.players[i].cardsPointSum();
         this.players[i].hp = Math.max(0, this.players[i].hp);
         this.players[i].score += this.players[i].hp;

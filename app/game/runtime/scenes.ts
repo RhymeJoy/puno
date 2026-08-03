@@ -500,28 +500,62 @@ class Scene_Load extends Scene_Base{
   }
   /*-------------------------------------------------------------------------*/
   createProgressBar(){
-    let dw = Graphics.width * 0.3;
-    let dh = 24;
-    let dx = Graphics.appCenterWidth(dw), dy = this.load_text.y + 36;
+    let dw = Graphics.width * 0.5;
+    let dh = 25;
+    // Leave a 0.75em gap between the loading status and the progress bar.
+    let loadingGap = Graphics.LineHeight * 0.75;
+    let dx = 0;
+    let dy = 0;
     this.bar = new Sprite_ProgressBar(dx, dy, dw, dh);
     this.bar.setMaxProgress(Graphics.getLoadingProgress[1] + Sound.getLoadingProgress[1]);
-    this.bar.enableValueText();
+    this.bar.enableValueText('percent-below');
+    this.loadingTextToBarGap = loadingGap;
+    this.layoutLoadingContent();
+  }
+  /*-------------------------------------------------------------------------*/
+  layoutLoadingContent(){
+    if(!this.loading_sprite || !this.load_text || !this.bar){return;}
+    const imageGap = Graphics.spacing;
+    const textToBarGap = this.loadingTextToBarGap || Graphics.LineHeight * 0.75;
+    const percent = this.bar.valueText;
+    const barVisualHeight = this.bar.height
+      + (percent?.y || 0)
+      + (percent?.height || 0) / 2;
+    const groupHeight = this.loading_sprite.height
+      + imageGap
+      + this.load_text.height
+      + textToBarGap
+      + barVisualHeight;
+    const groupTop = (Graphics.height - groupHeight) / 2;
+    const imageY = groupTop + this.loading_sprite.height / 2;
+    const textY = groupTop + this.loading_sprite.height + imageGap;
+    const barY = textY + this.load_text.height + textToBarGap;
+
+    this.loading_sprite.setPOS(Graphics.width / 2, imageY);
+    this.load_text.x = Graphics.appCenterWidth(this.load_text.width);
+    this.load_text.y = textY;
+    this.bar.setPOS(Graphics.appCenterWidth(this.bar.width), barY);
+    this.loadingLayoutReady = this.loading_sprite.width > 0
+      && this.loading_sprite.height > 0
+      && this.load_text.height > 0;
   }
   /*-------------------------------------------------------------------------*/
   createLoadingImage(){
     this.loading_sprite = Graphics.addSprite(Graphics.LoadImage);
-    let sx = Graphics.appCenterWidth(this.loading_sprite.width);;
-    let sy = Graphics.appCenterHeight(this.loading_sprite.height);
-    this.loading_sprite.setPOS(sx, sy);
+    // The sprite uses a centered anchor, so its position must be the canvas
+    // center rather than the left coordinate of a top-left anchored sprite.
+    let sx = Graphics.appCenterWidth();
+    this.loading_sprite.setPOS(sx, 0);
     this.loading_sprite.anchor.set(0.5);
   }
   /*-------------------------------------------------------------------------*/
   createLoadingText(){
-    this.load_text = Graphics.addText(Vocab.LoadText);
-    let lt = this.load_text, ls = this.loading_sprite;
-    let offset = Graphics._spacing;
+    const font = clone(Graphics.DefaultFontSetting);
+    font.fontSize = Graphics.LineHeight * 1.25;
+    this.load_text = Graphics.addText(Vocab.LoadText, null, font);
+    let lt = this.load_text;
     lt.x = Graphics.appCenterWidth(lt.width);
-    lt.y = Graphics.appCenterHeight(lt.height) + ls.height + offset;
+    lt.y = 0;
   }
   /*-------------------------------------------------------------------------*/
   reportLoaderProgress(loader, resources){
@@ -542,6 +576,9 @@ class Scene_Load extends Scene_Base{
   updateLoading(){
     this.updateImage();
     this.updateText();
+    if(!this.loadingLayoutReady){
+      this.layoutLoadingContent();
+    }
     if(this.allLoaded){
       if(this.loading_timer < 60)this.loading_timer += 1;
       if(this.loading_timer == 60){this.processLoadingComplete();}
@@ -578,7 +615,8 @@ class Scene_Load extends Scene_Base{
     }
     if(sprite.text == txt){return ;}
     sprite.text = txt;
-    sprite.x = Graphics.appCenterWidth(sprite.width) - Graphics._spacing * 2;
+    sprite.x = Graphics.appCenterWidth(sprite.width);
+    this.layoutLoadingContent();
   }
   /*-------------------------------------------------------------------------*/
   updateProgressBar(){
@@ -812,6 +850,51 @@ class Scene_Title extends Scene_Base{
   update(){
     super.update();
     this.updateparticles();
+    this.updateGameSetupDialogLayout();
+  }
+  /*-------------------------------------------------------------------------*/
+  /** Keep the complete game-setup dialog centered in the visible viewport. */
+  updateGameSetupDialogLayout(force = false){
+    const frame = this.gameSetupFrame;
+    if(!frame){return;}
+
+    const visibleHeight = Math.min(
+      Graphics.height,
+      Graphics.backgroundViewportHeight || Graphics.height
+    );
+    const visibleTop = (Graphics.height - visibleHeight) / 2;
+    const helpHeight = this.helpWindow?.height || 0;
+    const totalHeight = helpHeight + frame.height;
+    const x = (Graphics.width - frame.width) / 2;
+    const frameY = visibleTop + Math.max(0, (visibleHeight - totalHeight) / 2)
+      + helpHeight;
+    const signature = `${x}:${frameY}:${frame.width}:${frame.height}:${helpHeight}`;
+    if(!force && this._gameSetupDialogLayoutSignature === signature){return;}
+    this._gameSetupDialogLayoutSignature = signature;
+
+    frame.setPOS(x, frameY);
+    this.gameModeWindow?.setPOS(x, frameY);
+    if(this.gameOptionWindow){
+      this.gameOptionWindow.setPOS(x + (this.gameModeWindow?.width || 0), frameY);
+    }
+    if(this.helpWindow){
+      this.helpWindow.autoHeightBottom = frameY;
+      this.helpWindow.setPOS(x, frameY - helpHeight);
+    }
+
+    const optionWindow = this.gameOptionWindow;
+    const backButton = this.backButton;
+    if(optionWindow && backButton){
+      const startButtonWidth = optionWindow.startGameButtonWidth;
+      const startButtonX = optionWindow.x + optionWindow.padding / 2
+        + optionWindow.startGameButtonX;
+      const startButtonY = optionWindow.y + optionWindow.startGameTop;
+      const backX = startButtonX + startButtonWidth
+        + optionWindow.startGameButtonGap;
+      const backY = startButtonY
+        + (optionWindow.itemHeight - backButton.height) / 2;
+      backButton.setPOS(backX, backY);
+    }
   }
   /*-------------------------------------------------------------------------*/
   updateparticles(){
@@ -865,13 +948,14 @@ class Scene_Title extends Scene_Base{
     if(this.isActive() && !this.overlay && this.menu?.visible){
       this.menu.activate();
     }
+    this.updateGameSetupDialogLayout(true);
   }
   /*-------------------------------------------------------------------------*/
   createBackground(){
     this.backgroundImage = Graphics.addSprite(Graphics.Title);
-    // Keep the AVIF background aligned with the fixed game viewport even if
-    // the source asset has different metadata dimensions.
-    this.backgroundImage.setPOS(0, 0).resize(Graphics.width, Graphics.height);
+    // Fill the fixed viewport without distorting the source artwork. Any
+    // excess is cropped from the centered edges instead of being stretched.
+    Graphics.fitBackgroundSprite(this.backgroundImage);
     // Adjust these three values to tune the title background. 1 is the
     // original/default value for each setting.
     this.titleColorSettings = {
@@ -893,7 +977,7 @@ class Scene_Title extends Scene_Base{
   }
   /*-------------------------------------------------------------------------*/
   createMenu(){
-    let ww = 200, wh = 200;
+    let ww = 280, wh = 200;
     let wx = Graphics.width - ww - Graphics.padding / 2;
     let wy = Graphics.height / 2;
     this.menu = new Window_Menu(wx, wy, ww, wh);
@@ -1060,6 +1144,7 @@ class Scene_Title extends Scene_Base{
     this.backgroundImage.show();
     this.backgroundImage.tint = 0xffffff;
     this.dimBack.show().render();
+    this.updateGameSetupDialogLayout(true);
     this.gameSetupFrame.show();
     this.helpWindow.show().activate().render();
     this.gameModeWindow.show().activate().render();
@@ -1103,6 +1188,7 @@ class Scene_Title extends Scene_Base{
     }
     nextWindow.helpWindow = this.helpWindow;
     this.gameOptionWindow = nextWindow;
+    this.updateGameSetupDialogLayout(true);
 
     // Keep the window registered with the title scene. Hidden windows stay in
     // the scene so switching modes only changes visibility and active state.
@@ -1200,6 +1286,9 @@ class Scene_GameOver extends Scene_Base{
   /*-------------------------------------------------------------------------*/
   createBackground(){
     this.backgroundImage = Graphics.addSprite(Graphics.GameOver);
+    // Keep result-screen artwork proportional even when its source aspect
+    // ratio differs from the logical game viewport.
+    Graphics.fitBackgroundSprite(this.backgroundImage);
     Graphics.renderSprite(this.backgroundImage);
   }
   /*-------------------------------------------------------------------------*/
@@ -1314,7 +1403,10 @@ class Scene_GameOver extends Scene_Base{
   }
   /*-------------------------------------------------------------------------*/
   showResultWindow(){
-    this.resultWindow.show().setOpacity(0.1);
+    // The action buttons live inside the scoreboard frame. Keep the parent
+    // interactive while it is visible, otherwise PIXI stops hit testing at
+    // the frame before the child buttons can receive pointer events.
+    this.resultWindow.show().activate().setOpacity(0.1);
   }
   /*-------------------------------------------------------------------------*/
   showLeaveButton(){

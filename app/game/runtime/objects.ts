@@ -40,8 +40,15 @@ class Sprite_ProgressBar extends SpriteCanvas{
   }
   /*-------------------------------------------------------------------------*/
   enableValueText(mode = 'percent'){
+    this.valueTextBelow = mode === 'percent-below';
     this.valueTextMode = mode === 'health' ? 'health' : 'percent';
     if(!this.valueText){this.createValueText();}
+    if(this.valueTextBelow){
+      // The loading percentage sits below the bar, so it must be allowed to
+      // render outside the bar's compact canvas height.
+      this.mask = null;
+      if(this.maskGraphics){this.maskGraphics.visible = false;}
+    }
     this.updateValueText();
     return this;
   }
@@ -87,7 +94,11 @@ class Sprite_ProgressBar extends SpriteCanvas{
   }
   createValueText(){
     const font = clone(Graphics.DefaultFontSetting);
-    font.fontSize = 14;
+    // Keep the loading percentage as readable as the loading status text,
+    // including when the game is viewed on a phone.
+    // PixiJS uses numeric canvas font sizes, so express the requested 30px
+    // loading text as 1.25em of the game's 24px base line height.
+    font.fontSize = this.valueTextBelow ? Graphics.LineHeight * 1.25 : 14;
     font.fill = 0xffffff;
     font.stroke = {color: 0x000000, width: 3};
     this.valueText = new PIXI.Text({text: '', style: font});
@@ -101,7 +112,11 @@ class Sprite_ProgressBar extends SpriteCanvas{
   }
   updateValueTextLayout(){
     if(!this.valueText){return;}
-    this.valueText.position.set(this.width / 2, this.height / 2);
+    const y = this.valueTextBelow && this.fillHorz
+      // Keep a 1.25em visual gap between the bar and the larger percentage.
+      ? this.height + Graphics.LineHeight * 1.25
+      : this.height / 2;
+    this.valueText.position.set(this.width / 2, y);
     this.valueText.rotation = this.fillHorz ? 0 : -Math.PI / 2;
   }
   updateValueText(){

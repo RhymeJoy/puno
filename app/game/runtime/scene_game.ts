@@ -36,6 +36,10 @@ class Scene_Game extends Scene_Base{
     this._directionIndicatorFadePending = false;
     this._directionIndicatorFadeDelay = 0;
     this._directionIndicatorLocked = false;
+    // The game model changes currentPlayerIndex before the hand transition
+    // and card animations have made that player's controls ready.  Keep the
+    // visual turn marker tied to the player whose turn has actually begun.
+    this._turnReadyPlayerIndex = -1;
   }
   /*-------------------------------------------------------------------------*/
   create(){
@@ -57,6 +61,131 @@ class Scene_Game extends Scene_Base{
     this.createUnoButton();
   }
   /*-------------------------------------------------------------------------*/
+  /**
+   * Return the logical rectangle that is visible inside a wide viewport.
+   * The 16:9 game surface can be cropped vertically when its width fills a
+   * wider screen.
+   */
+  getGameVisibleRect(){
+    const height = Math.min(Graphics.height, Graphics.backgroundViewportHeight || Graphics.height);
+    const top = (Graphics.height - height) / 2;
+    return {top, bottom: top + height, height};
+  }
+  /*-------------------------------------------------------------------------*/
+  isWideGameLayout(){
+    return this.getGameVisibleRect().height < Graphics.height - 0.5;
+  }
+  /*-------------------------------------------------------------------------*/
+  getGameLayoutSprites(){
+    return [
+      this.deckSprite,
+      this.deckCountSprite,
+      this.discardPile,
+      ...(this.handCanvas || []),
+      this.directionIndicator,
+      this.infoSprite,
+      ...(this.hudCanvas || []),
+      this.timedHud,
+      this.hitEffectSprite,
+      ...(this.nameCanvas || []),
+      ...(this.penaltyCanvas || []),
+    ].filter(Boolean);
+  }
+  /*-------------------------------------------------------------------------*/
+  /** Keep the left/right player groups attached to the visible table edges. */
+  updateWideGameSideAnchors(scale){
+    if(!this.gameLayoutRoot || !scale){return;}
+    for(let i = 0; i < (this.handCanvas || []).length; ++i){
+      const side = i % 4;
+      if(side !== 1 && side !== 3){continue;}
+      const hand = this.handCanvas[i];
+      if(!hand){continue;}
+      hand._gameLayoutBaseX ??= hand.x;
+      const targetGlobalX = side === 1
+        ? Graphics.spacing
+        : Graphics.width - Graphics.spacing - hand.width * scale;
+      const targetLocalX = (targetGlobalX - this.gameLayoutRoot.x) / scale;
+      const delta = targetLocalX - hand._gameLayoutBaseX;
+      hand.x = hand._gameLayoutBaseX + delta;
+
+      [this.nameCanvas?.[i], this.penaltyCanvas?.[i], this.hudCanvas?.[i]]
+        .filter(Boolean)
+        .forEach(sprite => {
+          sprite._gameLayoutBaseX ??= sprite.x;
+          sprite.x = sprite._gameLayoutBaseX + delta;
+        });
+    }
+  }
+  /*-------------------------------------------------------------------------*/
+  restoreGameLayoutBasePositions(){
+    this.handCanvas?.forEach(hand => {
+      if(hand._gameLayoutBaseX != null){
+        hand.x = hand._gameLayoutBaseX;
+      }
+    });
+    [this.nameCanvas, this.penaltyCanvas, this.hudCanvas]
+      .filter(Boolean)
+      .flat()
+      .forEach(sprite => {
+        if(sprite._gameLayoutBaseX != null){
+          sprite.x = sprite._gameLayoutBaseX;
+        }
+      });
+  }
+  /*-------------------------------------------------------------------------*/
+  /**
+   * Keep gameplay artwork in one proportional layer on wide screens.
+   * This avoids assigning different emergency coordinates to cards, badges,
+   * status panels, and names when the browser crops the fixed game surface.
+   */
+  updateGameLayoutViewport(force = false){
+    const wide = this.isWideGameLayout();
+    const visible = this.getGameVisibleRect();
+    const scale = wide ? Math.min(1, visible.height / Graphics.height) : 1;
+    const signature = `${wide}:${visible.height}:${scale}`;
+    if(!force && signature === this._gameLayoutSignature){return;}
+    this._gameLayoutSignature = signature;
+
+    if(!wide){
+      if(this.gameLayoutRoot){
+        this.restoreGameLayoutBasePositions();
+        this.gameLayoutRoot.children.slice().forEach(sprite => this.addChild(sprite));
+        this.gameLayoutRoot.removeFromParent();
+        this.gameLayoutRoot = null;
+        this.sortChildren();
+      }
+      return;
+    }
+
+    if(!this.gameLayoutRoot){
+      this.gameLayoutRoot = new PIXI.Container();
+      this.gameLayoutRoot.sortableChildren = true;
+      this.gameLayoutRoot.zIndex = 1;
+      // Keep the responsive wrapper transparent to hit testing while still
+      // allowing its hand canvases and cards to receive pointer events.
+      this.gameLayoutRoot.eventMode = 'passive';
+      this.gameLayoutRoot.interactiveChildren = true;
+      this.addChild(this.gameLayoutRoot);
+    }
+    this.gameLayoutRoot.position.set(
+      (Graphics.width - Graphics.width * scale) / 2,
+      visible.top
+    );
+    this.gameLayoutRoot.scale.set(scale, scale);
+    this.updateWideGameSideAnchors(scale);
+    this.getGameLayoutSprites().forEach(sprite => {
+      if(sprite.parent !== this.gameLayoutRoot){
+        this.gameLayoutRoot.addChild(sprite);
+      }
+    });
+    this.gameLayoutRoot.sortChildren();
+    this.sortChildren();
+    if(this.players){
+      this.updateDirectionIndicator(true);
+      this.positionUnoButton();
+    }
+  }
+  /*-------------------------------------------------------------------------*/
   start(){
     super.start();
     if(typeof window !== 'undefined'){
@@ -67,6 +196,7 @@ class Scene_Game extends Scene_Base{
     this.unoButton.render();
     this.dimBack.render();
     Graphics.renderSprite(this.infoSprite);
+    this.updateGameLayoutViewport(true);
     EventManager.setTimeout(this.gameStart.bind(this), 90);
   }
   /*-------------------------------------------------------------------------*/
@@ -126,9 +256,14 @@ class Scene_Game extends Scene_Base{
     for(let i in this.players){
       this.players[i].lastHand = this.players[i].hand.slice();
     }
+    // Hand anchors are created before player names. Restore their authored
+    // positions while deriving the names, then reapply the responsive edge
+    // layout after every player sprite exists.
+    this.restoreGameLayoutBasePositions();
     this.createNameSprites();
     this.createPenaltySprites();
     this.createDummyWindow();
+    this.updateGameLayoutViewport(true);
   }
   /*-------------------------------------------------------------------------*/
   randomBackground(draw=false){
@@ -166,10 +301,9 @@ class Scene_Game extends Scene_Base{
   /*-------------------------------------------------------------------------*/
   fitBackgroundToWidth(){
     if(!this.backgroundImage){return;}
-    // Keep stage backgrounds proportional, fill the full width, and use the
-    // app's black clear color for any remaining vertical space.
-    this.backgroundImage.resizeToWidth(Graphics.width);
-    this.backgroundImage.setPOS(0, (Graphics.height - this.backgroundImage.height) / 2);
+    // Keep artwork proportional while adapting the visible crop for wide
+    // mobile screens.
+    Graphics.fitBackgroundSprite(this.backgroundImage);
   }
   /*-------------------------------------------------------------------------*/
   createDeckSprite(){
@@ -197,8 +331,7 @@ class Scene_Game extends Scene_Base{
     const font = clone(Graphics.DefaultFontSetting);
     font.fontSize = 22;
     font.fill = Graphics.color.White;
-    font.stroke = Graphics.color.Black;
-    font.strokeThickness = 4;
+    font.stroke = {color: Graphics.color.Black, width: 4};
 
     const countSprite = new SpriteCanvas(0, 0, width, height).setZ(0x11).hide();
     const countText = countSprite.drawText(0, 0, '', font, false);
@@ -283,9 +416,11 @@ class Scene_Game extends Scene_Base{
   updateDirectionIndicator(force = false){
     if(!this.directionIndicator || !this.game){return;}
     const clockwise = this.game.clockwise !== false;
-    const playerIndex = Number(this.game.currentPlayerIndex ?? 0);
+    const rawPlayerIndex = Number(this.game.currentPlayerIndex ?? -1);
+    const turnReady = rawPlayerIndex === this._turnReadyPlayerIndex;
+    const playerIndex = turnReady ? rawPlayerIndex : -1;
     const handSignature = this.players?.map(player => player.hand?.length || 0).join(',') || '';
-    const state = `${clockwise ? 1 : 0}:${playerIndex}:${handSignature}`;
+    const state = `${clockwise ? 1 : 0}:${rawPlayerIndex}:${playerIndex}:${handSignature}`;
     if(!force && this._directionIndicatorState === state){return;}
     this._directionIndicatorState = state;
 
@@ -305,8 +440,13 @@ class Scene_Game extends Scene_Base{
       if(!hand){continue;}
       const positionAngle = sideAngles[i % 4];
       const tangent = clockwise ? positionAngle + Math.PI / 2 : positionAngle - Math.PI / 2;
-      let badgeX = hand.x + hand.width / 2;
-      let badgeY = hand.y + hand.height / 2;
+      const handBounds = hand.getBounds?.();
+      let badgeX = handBounds
+        ? (handBounds.left + handBounds.right) / 2
+        : hand.x + hand.width / 2;
+      let badgeY = handBounds
+        ? (handBounds.top + handBounds.bottom) / 2
+        : hand.y + hand.height / 2;
       const badgeOpacity = i === playerIndex ? 1 : 0.5;
       const badgeOffset = -50;
       // Position all badges against the dealt card piles once. Card draw/play
@@ -347,17 +487,17 @@ class Scene_Game extends Scene_Base{
         case 0:
           // Keep the bottom player's badge above the hand mask. Placing it
           // inside the hand makes the turn marker sit on top of the cards.
-          badgeY = hand.y - 32;
+          badgeY = (handBounds?.top ?? hand.y) - 32;
           break;
         case 1:
           // Left player's badge: move slightly to the right.
-          badgeX = hand.x + hand.width - 43;
+          badgeX = (handBounds?.right ?? (hand.x + hand.width)) - 43;
           break;
         case 2:
-          badgeY = hand.y + hand.height + badgeOffset;
+          badgeY = (handBounds?.bottom ?? (hand.y + hand.height)) + badgeOffset;
           break;
         case 3:
-          badgeX = hand.x - badgeOffset;
+          badgeX = (handBounds?.left ?? hand.x) - badgeOffset;
           break;
       }
       const hoverOffset = this.directionIndicator.hoverBadgeOffset;
@@ -366,22 +506,25 @@ class Scene_Game extends Scene_Base{
         badgeY += hoverOffset.y;
       }
       badgePositions.push({x: badgeX, y: badgeY, radius: 20});
-      graphics.circle(badgeX, badgeY, 16)
+      const drawPoint = this.gameLayoutRoot
+        ? this.gameLayoutRoot.toLocal(new PIXI.Point(badgeX, badgeY))
+        : {x: badgeX, y: badgeY};
+      graphics.circle(drawPoint.x, drawPoint.y, 16)
         .fill({color: 0x111111, alpha: 0.78 * badgeOpacity})
         .stroke({width: 2, color, alpha: 0.8 * badgeOpacity});
       this.drawDirectionArrow(
         graphics,
-        badgeX,
-        badgeY,
+        drawPoint.x,
+        drawPoint.y,
         tangent,
         20,
         color,
         badgeOpacity
       );
       if(i === playerIndex){
-        graphics.circle(badgeX, badgeY, 20)
+        graphics.circle(drawPoint.x, drawPoint.y, 20)
           .stroke({width: 4, color: 0xffffff, alpha: 0.95});
-        graphics.circle(badgeX, badgeY, 18)
+        graphics.circle(drawPoint.x, drawPoint.y, 18)
           .stroke({width: 2, color, alpha: 1});
       }
     }
@@ -415,6 +558,7 @@ class Scene_Game extends Scene_Base{
     this._directionIndicatorFadePending = false;
     this._directionIndicatorFadeDelay = 0;
     this._directionIndicatorLocked = false;
+    this._turnReadyPlayerIndex = -1;
     this._directionIndicatorState = null;
     this.directionIndicator?.setOpacity(0).hide();
     this.penaltyCanvas?.forEach(sprite => sprite.setOpacity(0).hide());
@@ -759,7 +903,7 @@ class Scene_Game extends Scene_Base{
   createSelectionWindow(){
     let ww = 300, wh = 250;
     let wx = Graphics.appCenterWidth(ww);
-    let wy = Graphics.appCenterHeight(wh);
+    let wy = Graphics.appVisibleCenterHeight(wh);
     this.selectionWindow = new Window_CardSelection(wx, wy, ww, wh);
     this.selectionWindow.hide().setZ(0x30);
     this.selectionWindow.setHandler('cancel', ()=>{
@@ -1001,7 +1145,7 @@ class Scene_Game extends Scene_Base{
   createNextButton(){
     this.nextButton = new Window_Back(0, 0, this.onActionNext.bind(this), Vocab.Next);
     let wx = Graphics.width - this.nextButton.width - Graphics.padding;
-    let wy = Graphics.padding;
+    let wy = this.getGameVisibleRect().top + Graphics.padding;
     this.nextButton.setPOS(wx, wy).setZ(0x50).hide();
   }
   /*-------------------------------------------------------------------------*/
@@ -1019,12 +1163,15 @@ class Scene_Game extends Scene_Base{
       // Keep the call-to-action beside the status card instead of covering
       // its status row.  The status card is anchored to the bottom-right,
       // so its left edge is the stable reference for all game modes.
+      const infoBounds = this.infoSprite.getBounds?.();
+      const infoLeft = infoBounds?.left ?? this.infoSprite.x;
+      const infoBottom = infoBounds?.bottom ?? (this.infoSprite.y + this.infoSprite.height);
       const x = Math.max(
         Graphics.padding,
-        this.infoSprite.x - this.unoButton.width - Graphics.spacing
+        infoLeft - this.unoButton.width - Graphics.spacing
       );
       const handBounds = this.handCanvas?.[0]?.getBounds?.();
-      const alignedY = this.infoSprite.y + this.infoSprite.height - this.unoButton.height - 8;
+      const alignedY = infoBottom - this.unoButton.height - 8;
       const aboveHandY = handBounds
         ? handBounds.top - this.unoButton.height - Graphics.spacing
         : alignedY;
@@ -1405,6 +1552,7 @@ class Scene_Game extends Scene_Base{
   /*-------------------------------------------------------------------------*/
   update(){
     super.update();
+    this.updateGameLayoutViewport();
     if(this._gamePaused){return;}
     if(this._leavingBattle){return ;}
     // Check if user is trying to leave the page and show confirmation
@@ -1691,11 +1839,12 @@ class Scene_Game extends Scene_Base{
   positionHintWindow(x=null, y=null){
     if(!this.hintWindow){return ;}
     const anchor = this.getHintAnchorPosition();
+    const visible = this.getGameVisibleRect();
     if(x == null){x = anchor.x - this.hintWindow.width / 2;}
     if(y == null){y = anchor.y - this.hintWindow.height - 12;}
-    if(y < 0){y = anchor.y + 12;}
+    if(y < visible.top){y = anchor.y + 12;}
     x = Math.max(0, Math.min(x, Graphics.width - this.hintWindow.width));
-    y = Math.max(0, Math.min(y, Graphics.height - this.hintWindow.height));
+    y = Math.max(visible.top, Math.min(y, visible.bottom - this.hintWindow.height));
     this.hintWindow.setPOS(x, y);
   }
   /*-------------------------------------------------------------------------*/
@@ -1796,19 +1945,35 @@ class Scene_Game extends Scene_Base{
     card.sprite.off('pointertap');
     // Add fresh listeners with arrow functions to preserve 'this' context
     const self = this;
+    // A touch contact can emit pointerenter on mobile browsers.  Hovering a
+    // card moves and scales it, which can change the hit target while the
+    // finger is still down and make the following pointertap intermittent.
+    // Touch should activate the card without running desktop hover effects.
+    const isTouchPointer = (event) => event?.pointerType === 'touch' ||
+      (Graphics.isMobileDevice && event?.pointerType !== 'mouse' &&
+       event?.pointerType !== 'pen');
     card.sprite.on('pointerenter', (e) => {
       debug_log("pointerenter event fired for card:", card);
-      self.showCardInfo(card);
+      // Touch keeps the enlarged preview, but showCardInfo leaves the card
+      // in its original slot so the finger's hit target does not move.
+      self.showCardInfo(card, isTouchPointer(e));
     });
     card.sprite.on('pointermove', (e) => {
+      if(isTouchPointer(e)){return;}
       self.updateHintWindow();
     });
     card.sprite.on('pointerleave', (e) => {
+      if(isTouchPointer(e)){return;}
       self.hideCardInfo(card);
     });
     card.sprite.on('pointertap', (e) => {
       debug_log("pointertap event fired! calling onCardTrigger for card:", card);
       self.onCardTrigger(card);
+      // An unplayable touch still gets the visual preview, so clear it after
+      // the tap when onCardTrigger did not already consume the card.
+      if(isTouchPointer(e) && self.hintWindow?.subject === card){
+        self.hideCardInfo(card);
+      }
     });
     debug_log("attachCardInfo completed:", card, "eventMode:", card.sprite.eventMode, "has listeners:", card.sprite.listenerCount('pointertap') > 0);
   }
@@ -1826,13 +1991,13 @@ class Scene_Game extends Scene_Base{
     card.sprite.removeAllListeners();
   }
   /*-------------------------------------------------------------------------*/
-  showCardInfo(card){
+  showCardInfo(card, touch = false){
     let info = this.getCardHelp(card);
     this.clearDirectionBadgeHoverOffset();
     // Lift every hovered card slightly after scaling it. The collision check
     // is intentionally done again after this first lift, because scaling can
     // make a card touch a badge even when its normal bounds did not.
-    let hoverLift = 32;
+    let hoverLift = touch ? 0 : 32;
     this.setPlayerHandHoverOverflow(card, true, hoverLift);
     card.sprite.setZ(0x30);
     // Make only the hovered card visibly larger while leaving the hand
@@ -2430,7 +2595,7 @@ class Scene_Game extends Scene_Base{
       Vocab["DrawPlayablePrompt"],
       Vocab["PlayCard"], Vocab["KeepCard"]
     );
-    win.setPOS(Graphics.appCenterWidth(win.width), Graphics.appCenterHeight(win.height));
+    win.setPOS(Graphics.appCenterWidth(win.width), Graphics.appVisibleCenterHeight(win.height));
     win.setHandler('yes', ()=>{
       Sound.playOK();
       this._pendingDrawChoice = null;
@@ -2507,6 +2672,30 @@ class Scene_Game extends Scene_Base{
   }
   /*-------------------------------------------------------------------------*/
   processUserTurn(pid){
+    this._turnReadyPlayerIndex = Number(pid);
+    if(parseInt(pid) === 0){
+      // A Trade replaces the hand arrays while the old card sprites remain
+      // attached to their previous hand canvas.  Reconcile that visual/event
+      // state before the player can click a card.  This is especially
+      // important when the responsive wrapper was created on a wide mobile
+      // viewport, where changing the viewport later used to rebuild it by
+      // accident and make the cards interactive again.
+      this.updateGameLayoutViewport(true);
+      this.ensurePlayerHandInteraction();
+
+      // On mobile, a turn can begin while the previous player's final card
+      // animation is still handing sprites back to their hand canvases.  A
+      // few short rechecks make the new turn tolerant of that handoff without
+      // changing the authored layout or the normal desktop timing.
+      if(Graphics.isMobileDevice){
+        [16, 64, 144].forEach(delay => EventManager.setTimeout(()=>{
+          if(this.playerPhase && this.game?.currentPlayerIndex === 0){
+            this.updateGameLayoutViewport(true);
+            this.ensurePlayerHandInteraction();
+          }
+        }, delay));
+      }
+    }
     this.setCursor(pid);
     this.playerPhase = true;
     this.updateUnoButton();
@@ -2518,6 +2707,7 @@ class Scene_Game extends Scene_Base{
   processUserTurnEnd(){
     this.game?.finishTimedTurnAction?.();
     this.playerPhase = false;
+    this._turnReadyPlayerIndex = -1;
     this._drawInProgress = false;
     this._pendingDrawChoice = null;
     this._unoCalled = false;
@@ -2538,6 +2728,7 @@ class Scene_Game extends Scene_Base{
   }
   /*-------------------------------------------------------------------------*/
   processNPCTurn(pid){
+    this._turnReadyPlayerIndex = Number(pid);
     this.setCursor(pid);
     EventManager.setTimeout(()=>{
       this.updatePenaltyInfo(true);
@@ -2555,6 +2746,38 @@ class Scene_Game extends Scene_Base{
     let sh = Graphics.lineHeight;
     this.dummy.resize(sw, sh);
     this.cursor.setPOS(sx, sy).show();
+  }
+  /*-------------------------------------------------------------------------*/
+  ensurePlayerHandInteraction(){
+    const hand = this.players?.[0]?.hand;
+    const canvas = this.handCanvas?.[0];
+    if(!hand || !canvas){return;}
+
+    // A traded card may still be owned by the other hand canvas.  Run the
+    // normal layout path in that case so the sprite is moved and all card
+    // listeners are attached in one place.
+    const needsLayout = hand.some(card => !card?.sprite || card.sprite.parent !== canvas);
+    if(needsLayout){
+      this.arrangeHandCards(0, false, true);
+      canvas.eventMode = 'static';
+      canvas.interactiveChildren = true;
+      this.activatePlayerCards();
+      return;
+    }
+
+    // The normal path is already laid out; only restore the interaction flags
+    // if a previous play/deal/hand exchange detached them.
+    hand.forEach(card => {
+      if(!card?.sprite){return;}
+      if(!card.attached){this.attachCardInfo(card);}
+      card.sprite.attached = true;
+      card.sprite._forceInteractive = true;
+      card.sprite.lastActiveState = true;
+      card.sprite.eventMode = 'static';
+    });
+    canvas.eventMode = 'static';
+    canvas.interactiveChildren = true;
+    this.activatePlayerCards();
   }
   /*-------------------------------------------------------------------------*/
   applyColorChangeEffect(cid){
@@ -2582,7 +2805,7 @@ class Scene_Game extends Scene_Base{
     };
     const win = new Window_Confirm(0, 0, 460, 180, Vocab["LeaveBattleConfirm"]);
     win.messageKey = "LeaveBattleConfirm";
-    win.setPOS(Graphics.appCenterWidth(win.width), Graphics.appCenterHeight(win.height));
+    win.setPOS(Graphics.appCenterWidth(win.width), Graphics.appVisibleCenterHeight(win.height));
     win.setHandler('yes', yesHandler);
     win.setHandler('no', noHandler);
     win.raise();

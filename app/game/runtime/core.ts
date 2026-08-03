@@ -188,7 +188,9 @@ class Graphics{
   /** Create a larger bottom shortcut with a language-aware hover label. */
   static createGlobalButton(iconID, dx, label, handler, xmarkVisible = false){
     const buttonSize = 45; // 36px × 125%
-    const dy = this.height - buttonSize - this.spacing;
+    const visibleHeight = Math.min(this.height, this.backgroundViewportHeight || this.height);
+    const visibleBottom = (this.height - visibleHeight) / 2 + visibleHeight;
+    const dy = visibleBottom - buttonSize - this.spacing;
     const button = new SpriteCanvas(0, 0, buttonSize, buttonSize);
     const icon = button.drawIcon(iconID, 0, 0);
     icon.scale.set(1.5, 1.5);
@@ -209,6 +211,9 @@ class Graphics{
     tooltip.setPOS(dx + buttonSize / 2 - tooltip.width / 2, dy - tooltip.height - 2);
     tooltip.setZ(0x210).hide();
     button.hoverLabel = tooltip;
+    button._globalX = dx;
+    button._globalButtonSize = buttonSize;
+    button._globalTooltip = tooltip;
     button.on('pointerenter', function(){tooltip.show();});
     button.on('pointerleave', function(){tooltip.hide();});
     // Pixi emits `pointertap` for mouse, touch and pen. Keeping separate
@@ -219,6 +224,25 @@ class Graphics{
     button.setZ(0x200).setPOS(dx, dy).alwaysActive = true;
     this.globalSprites.push(button, tooltip);
     return button;
+  }
+  /*---------------------------------------------------------------------------*/
+  /** Keep the bottom global controls inside the currently visible canvas slice. */
+  static updateGlobalButtonPositions(){
+    const visibleHeight = Math.min(this.height, this.backgroundViewportHeight || this.height);
+    const visibleBottom = (this.height - visibleHeight) / 2 + visibleHeight;
+    (this.globalSprites || []).forEach(function(sprite){
+      if(sprite._globalX == null){return;}
+      const buttonSize = sprite._globalButtonSize || sprite.width || 45;
+      const dy = visibleBottom - buttonSize - this.spacing;
+      sprite.setPOS(sprite._globalX, dy);
+      const tooltip = sprite._globalTooltip;
+      if(tooltip){
+        tooltip.setPOS(
+          sprite._globalX + buttonSize / 2 - tooltip.width / 2,
+          dy - tooltip.height - 2,
+        );
+      }
+    }.bind(this));
   }
   /*---------------------------------------------------------------------------*/
   /** Rebuild global controls after the language dictionary changes. */
@@ -424,15 +448,20 @@ class Graphics{
     const viewportWidth = viewport?.width || window.innerWidth || document.documentElement.clientWidth || screen.width;
     const viewportHeight = viewport?.height || window.innerHeight || document.documentElement.clientHeight || screen.height;
     const fitViewport = this.isMobileDevice || (DataManager.canvasScale || "fit") === "fit";
+    const wideLandscape = viewportWidth > viewportHeight
+      && viewportWidth / viewportHeight > this._width / this._height;
     this.app.x = Math.max((viewportWidth - displayWidth) / 2, 0);
-    this.app.y = fitViewport
-      ? Math.max((viewportHeight - displayHeight) / 2, 0)
-      : Math.max((viewportHeight - displayHeight) / 2 - this._padding * 2, 0);
+    this.app.y = wideLandscape
+      ? (viewportHeight - displayHeight) / 2
+      : fitViewport
+        ? Math.max((viewportHeight - displayHeight) / 2, 0)
+        : Math.max((viewportHeight - displayHeight) / 2 - this._padding * 2, 0);
     this.app.canvas.style.left = this.app.x + 'px';
     this.app.canvas.style.top = this.app.y + 'px';
     this.app.canvas.style.width = displayWidth + 'px';
     this.app.canvas.style.height = displayHeight + 'px';
     this.relocatPageElement(displayHeight);
+    this.updateGlobalButtonPositions();
   }
   /*-------------------------------------------------------------------------*/
   static mapClientPosition(clientX, clientY){
@@ -743,7 +772,60 @@ class Graphics{
     const viewportHeight = viewport?.height || window.innerHeight || document.documentElement.clientHeight || screen.height;
     const widthScale = Math.max(viewportWidth, 1) / this._width;
     const heightScale = Math.max(viewportHeight, 1) / this._height;
-    return Math.max(Math.min(widthScale, heightScale), 0.25);
+    const fitScale = Math.min(widthScale, heightScale);
+    const isWideLandscape = viewportWidth > viewportHeight
+      && viewportWidth / viewportHeight > this._width / this._height;
+    if(isWideLandscape){
+      // Any extra-wide viewport fills its width. The content layer keeps the
+      // original 16:9 composition inside the vertically cropped canvas.
+      return Math.max(widthScale, 0.25);
+    }
+    return Math.max(fitScale, 0.25);
+  }
+  /**-------------------------------------------------------------------------
+   * Logical height visible through a wide viewport. A 16:9 game surface may
+   * be vertically cropped when a wide screen is filled by its full width.
+   */
+  static get backgroundViewportHeight(){
+    const viewport = window.visualViewport;
+    const viewportWidth = viewport?.width || window.innerWidth || document.documentElement.clientWidth || screen.width;
+    const viewportHeight = viewport?.height || window.innerHeight || document.documentElement.clientHeight || screen.height;
+    const isWideLandscape = viewportWidth > viewportHeight
+      && viewportWidth / viewportHeight > this._width / this._height;
+    if(!isWideLandscape){return this.height;}
+    return Math.min(this.height, viewportHeight / this.displayScale);
+  }
+  /**-------------------------------------------------------------------------
+   * Fit a full-screen image to the actual visible area without distortion.
+   */
+  static fitBackgroundSprite(sprite){
+    if(!sprite){return sprite;}
+    const targetHeight = this.backgroundViewportHeight;
+    const sourceWidth = Number(sprite.texture?.orig?.width || sprite.texture?.width);
+    const sourceHeight = Number(sprite.texture?.orig?.height || sprite.texture?.height);
+    if(!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight)
+       || sourceWidth <= 0 || sourceHeight <= 0){
+      // Asset textures can finish decoding one frame after the scene is
+      // created, especially on mobile. Retry once the texture has dimensions.
+      requestAnimationFrame(()=>this.fitBackgroundSprite(sprite));
+      return sprite;
+    }
+    const scale = Math.max(this.width / sourceWidth, targetHeight / sourceHeight);
+    const scaledWidth = sourceWidth * scale;
+    const scaledHeight = sourceHeight * scale;
+    sprite.scale.set(scale, scale);
+    // Set the transform directly. Some mobile texture initialization paths
+    // can leave Sprite.setPOS with a stale NaN coordinate on first render.
+    const x = (this.width - scaledWidth) / 2;
+    const y = (this.height - targetHeight) / 2 + (targetHeight - scaledHeight) / 2;
+    sprite.position.set(x, y);
+    // Sprite.updateMovement also uses these targets; keep them synchronized
+    // so the next frame cannot replace valid coordinates with NaN.
+    sprite.realX = x;
+    sprite.realY = y;
+    sprite.deltaX = 0;
+    sprite.deltaY = 0;
+    return sprite;
   }
   /**-------------------------------------------------------------------------
    * Change the display scale without changing the internal game resolution.
@@ -817,7 +899,10 @@ class Graphics{
    */
   static requestMobileFullscreen(){
     if(!this.isMobileDevice || this.isFullscreen){
-      if(this.isFullscreen){this.removeMobileFullscreenRetryHandler();}
+      if(this.isFullscreen){
+        this.removeMobileFullscreenRetryHandler();
+        this.lockMobileLandscape();
+      }
       return Promise.resolve(this.isFullscreen);
     }
     const target = document.documentElement;
@@ -836,11 +921,29 @@ class Graphics{
     return Promise.resolve(requestResult)
       .then(function(){
         this.removeMobileFullscreenRetryHandler();
+        // A landscape viewport gives the fixed 16:9 game surface enough room
+        // to keep cards, player areas, and controls readable on phones.
+        this.lockMobileLandscape();
         return true;
       }.bind(this), function(){
         this.installMobileFullscreenRetryHandler();
         return false;
       }.bind(this));
+  }
+  /**-------------------------------------------------------------------------
+   * Lock mobile fullscreen gameplay to landscape when the browser supports it.
+   * The request is best-effort because iOS Safari and some embedded browsers
+   * do not expose Screen Orientation locking.
+   */
+  static lockMobileLandscape(){
+    if(!this.isMobileDevice || !screen?.orientation?.lock){
+      return Promise.resolve(false);
+    }
+    return screen.orientation.lock('landscape').then(function(){
+      return true;
+    }, function(){
+      return false;
+    });
   }
   /**-------------------------------------------------------------------------*/
   static installMobileFullscreenRetryHandler(){
@@ -889,6 +992,20 @@ class Graphics{
    */  
   static appCenterHeight(y = 0){
     return (this._height - y) / 2;
+  }
+  /**
+   * Return the vertical position that centers an object in the portion of the
+   * logical canvas currently visible on wide/cropped screens.  Keep
+   * appCenterHeight unchanged because gameplay table objects intentionally
+   * use the authored 1280x720 coordinate system.
+   */
+  static appVisibleCenterHeight(y = 0){
+    const visibleHeight = Math.min(
+      this.height,
+      this.backgroundViewportHeight || this.height
+    );
+    const visibleTop = (this.height - visibleHeight) / 2;
+    return visibleTop + (visibleHeight - y) / 2;
   }
   /**-------------------------------------------------------------------------
    * > Frame update
@@ -2013,11 +2130,6 @@ class Sound{
     this.playBGM(this.Defeat);
   }
   /*-------------------------------------------------------------------------*/
-  static playCardPlace(){
-    let cand = ["audio/se/cardPlace1.mp3", "audio/se/cardPlace2.mp3", "audio/se/cardPlace3.mp3"]
-    this.playSE(cand[parseInt(randInt(0, cand.length-1))])
-  }
-  /*-------------------------------------------------------------------------*/
   static playOK(){this.playSE(this.OK);}
   static playOK2(){this.playSE(this.OK2);}
   static playBuzzer(){this.playSE(this.Buzzer);}
@@ -2187,8 +2299,13 @@ class Sprite extends PIXI.Container{
     const sourceWidth = this.texture?.orig?.width || this.width;
     const sourceHeight = this.texture?.orig?.height || this.height;
     const scale = Math.max(w / sourceWidth, h / sourceHeight);
+    const scaledWidth = sourceWidth * scale;
+    const scaledHeight = sourceHeight * scale;
     this.scale.set(scale, scale);
-    this.setPOS((w - this.width) / 2, (h - this.height) / 2);
+    // Use calculated dimensions instead of the container's transformed
+    // width/height, which may still be unavailable while a texture finishes
+    // initializing on mobile browsers.
+    this.setPOS((w - scaledWidth) / 2, (h - scaledHeight) / 2);
     return this;
   }
   /*-------------------------------------------------------------------------*/
